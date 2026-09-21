@@ -44,4 +44,4 @@ __all__ = [
     "GraphUnavailable", "Member", "MemberNotFound", "Model", "Param",
     "ParseError", "PortRef", "Submodel", "Var", "parse_model",
 ]
-__version__ = "0.4.0"
+__version__ = "0.5.0"

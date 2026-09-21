@@ -162,9 +162,11 @@ class PropertyEntry:
     id: str = ""
     name: str = ""
     target: str = ""
+    sticker: str = ""       # 模型作者标的置信度贴纸（Low confidence / High importance）
 
     def to_dict(self) -> dict:
-        return {"id": self.id, "name": self.name, "target": self.target}
+        return {"id": self.id, "name": self.name, "target": self.target,
+                "sticker": self.sticker}
 
 
 @dataclass

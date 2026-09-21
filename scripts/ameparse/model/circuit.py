@@ -192,6 +192,7 @@ class Var:
             "kind": self.kind,
             "save": self.save_value,
             "saved": self.saved,
+            "value": self.value,
         }
 
 
@@ -365,14 +366,28 @@ class Supercomponent:
 
 @dataclass
 class GlobalParam:
+    """一个全局参数（AMESim Global Parameter）。
+
+    同名全局可能在 ``.amegp``/``.cir``/``.pl`` 三处都有定义且取值不一致，
+    ``source`` 记录本条来自哪个成员；跨来源分歧由 ``Model`` 汇总进
+    ``global_conflicts``，不在这里择一。
+    """
+
     varname: str = ""
     title: str = ""
     value: str = ""
     units: str = ""
+    default: str = ""
+    min: str = ""
+    max: str = ""
+    type: str = ""
+    source: str = ""                 # ".amegp" | ".cir" | ".pl"
 
     def to_dict(self) -> dict:
         return {"varname": self.varname, "title": self.title,
-                "value": self.value, "units": self.units}
+                "value": self.value, "units": self.units,
+                "default": self.default, "min": self.min, "max": self.max,
+                "type": self.type, "source": self.source}
 
 
 @dataclass

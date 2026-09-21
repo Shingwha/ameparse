@@ -7,8 +7,38 @@ tar 内成员以 ``模型名_.扩展名`` 命名（如 ``HEV_GWCD_40_.cir``）�
 from __future__ import annotations
 
 import io
+import re
 import tarfile
 from dataclasses import dataclass
+
+# XML 头部的 encoding 声明
+_DECL_RE = re.compile(rb'encoding="([A-Za-z0-9_.\-]+)"')
+
+# 声明成这些编码时仍先按 UTF-8 试：AMESim 把 .cir 标成 ISO-8859-1，
+# 实际写的却是 UTF-8（实测舱体与 PB62 两个模型），照声明解码会把中文
+# 标题全部变成乱码，而 UTF-8 是 ASCII 超集、纯 ASCII 内容两者等价。
+_TRY_UTF8_FIRST = ("iso-8859-1", "latin-1", "latin1", "us-ascii", "ascii", "")
+
+
+def decode_text(data: bytes, default: str = "latin-1") -> str:
+    """按 XML 声明解码，未声明或声明为 latin 系则先试 UTF-8。
+
+    UTF-8 解不出来才退回 ``default``（``errors="replace"``，绝不抛异常）。
+    """
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        # UTF-16 BOM：声明本身也是 UTF-16 编码的，别指望用正则认出它
+        return data.decode("utf-16", errors="replace")
+    decl = _DECL_RE.search(data[:200])
+    enc = decl.group(1).decode("ascii", "ignore").lower() if decl else ""
+    if enc not in _TRY_UTF8_FIRST:
+        try:
+            return data.decode(enc, errors="replace")
+        except LookupError:
+            pass
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode(default, errors="replace")
 
 
 @dataclass(frozen=True)
@@ -85,7 +115,7 @@ class Amefile:
         data = self.read(suffix)
         if data is None:
             return None
-        return data.decode(encoding, errors="replace")
+        return decode_text(data, encoding)
 
     # -- 便捷属性 -------------------------------------------------------
     @property

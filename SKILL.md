@@ -63,13 +63,30 @@ at a time.
 ### 3. Parameters — define the search space
 
 ```bash
+ameparse MODEL.ame --globals                       # global params + who uses them
+ameparse MODEL.ame --global LF_beta7               # one knob and its ref sites
 ameparse MODEL.ame --params --component BatPackGene --modified-only
 ameparse MODEL.ame --param Uinit@BatPackGene
 ```
 
-Modified params (value ≠ default) are the modeler's intended tuning knobs —
-start there. `--param` gives `min`/`max` (your search bounds), `unit`,
-`default`, current `value`.
+Two different knob spaces — check both:
+
+- **Global parameters** (`--globals`). On encapsulated/protected deliverables
+  (encrypted submodels, GUI read-only) the component tree is largely inert and
+  the globals are the real lever. `refs` counts the parameter/variable values
+  that mention each global, and a **variable** hit is that state's *initial
+  value*, so the ref list answers "which states does this knob drive".
+  Also read the diagnostics before trusting any value: `conflicts` (same name,
+  different value across `.amegp`/`.cir`/`.pl` — the authoritative one is
+  `global_params[].value`), `twins` (`X` vs `X__INSTANCE` with divergent values
+  — edit one and the other silently keeps the old value), `unused` (defined but
+  referenced nowhere).
+- **Component parameters**, where modified-vs-default is the modeler's intent.
+  This heuristic **fails on wrapped deliverables**: `--params --modified-only`
+  there returns only wrapper rewrites (`x>NAME` → `x>NAME__BLOCK_1`), not real
+  knobs. If every modified row looks like a rename, the levers are the globals.
+
+`--param` gives `min`/`max` (your search bounds), `unit`, `default`, current `value`.
 
 ### 4. Verify observability — before writing any loop
 
@@ -113,8 +130,11 @@ against the template as a hygiene check.
 | `--params --component A / --submodel S [--modified-only] / --all` | compact param rows |
 | `--variable ID` | one variable incl. `saved` (retrievable) and `save` (saveable flag) |
 | `--variables --component A / --submodel S [--saved / --save-flag / --hidden] / --all` | compact variable rows; `--saved` is the authoritative filter |
-| `--search KEYWORD` | params & variables by name/title substring (capped at 100 each) |
+| `--search KEYWORD` | globals, params & variables by name/title substring (capped at 100 each) |
 | `--study-params` | study/batch parameters with bounds |
+| `--globals` | global parameters (`.amegp`/`.cir`/`.pl` merged) with reference counts, conflicts and diagnostics |
+| `--global NAME` | one global with every referencing param/variable (`name@alias`, role, expression) |
+| `--globals --with-refs` | `--globals` plus per-global reference lists (capped at 20 each; prefer `--global NAME`) |
 | `--neighbors ALIAS` | per-port neighbor map |
 | `--subgraph ALIAS [--hops N] [--domain D]` | local graph: typed nodes + typed edges (≤300 nodes) |
 | `--saved-variables` | full save list (large; prefer `--variables --saved --component`) |
@@ -126,6 +146,15 @@ against the template as a hygiene check.
 
 - Ports are 1-based everywhere (`.cir` raw refs in `connections` are 0-based).
 - Without a compiled `.c` member the graph is unavailable — graph queries fail;
-  `connections` (raw entity numbers) still works.
+  `connections` (raw entity numbers) still works. The **globals/refs path needs
+  no `.c`** — it reads `.cir` text only, so it works on every model.
+- `--globals` on a large model is a large output (one row per global; PB62 has
+  234). Narrow with `--search` or drill in with `--global NAME`.
+- Titles/units of Chinese models are UTF-8 in files that declare
+  `encoding="ISO-8859-1"`; the decoder prefers UTF-8 so titles come out readable
+  (a mojibake title means the value you are reading may be misattributed too).
+- `.amegp`, `.cir` and `.pl` can each define the same global with a different
+  value. Never assume the one you read is the operative one — `--globals` gives
+  `source` per entry and lists disagreements in `conflicts`.
 - `.sim` fields beyond start/final/print-interval are version-dependent;
   access them by index in `--settings` → `simulation.values`.

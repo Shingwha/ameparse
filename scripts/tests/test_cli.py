@@ -170,3 +170,78 @@ def test_study_params(ame_path, capsys):
 def test_error_paths(ame_path, capsys):
     assert _run(["--param", "nope@x"], ame_path, capsys)[0] == 1
     assert _run(["--component", "nope"], ame_path, capsys)[0] == 1
+
+
+# ---------------------------------------------------------------- 全局参数
+
+
+def test_globals(ame_path, capsys):
+    code, out = _run(["--globals"], ame_path, capsys)
+    assert code == 0
+    r = _json(out)
+    names = [g["name"] for g in r["global_params"]]
+    assert names == ["gconst", "gderived", "gtwin", "gtwin__SUB1",
+                     "gunused", "gplonly"]
+    gconst = r["global_params"][0]
+    assert gconst["value"] == "9.81" and gconst["source"] == ".amegp"
+    assert gconst["unit"] == "m/s2"
+    assert next(g for g in r["global_params"] if g["name"] == "gtwin")["refs"] == 1
+    # 冲突与三类诊断一并给出，不必再单独跑一条命令
+    assert [c["name"] for c in r["conflicts"]] == ["gconst"]
+    assert [t["base"] for t in r["twins"]] == ["gtwin"]
+    assert [d["owner"] for d in r["undefined_refs"]] == ["gderived"]
+    assert "gunused" in r["unused"]
+
+
+def test_global_detail_with_refs(ame_path, capsys):
+    code, out = _run(["--global", "gtwin"], ame_path, capsys)
+    assert code == 0
+    g = _json(out)
+    assert g["name"] == "gtwin" and g["value"] == "1"
+    assert len(g["refs"]) == 1
+    ref = g["refs"][0]
+    assert ref["owner_id"] == "q1@pump01"
+    assert ref["kind"] == "variable" and ref["role"] == "value"
+    assert g["conflicts"] == []
+
+
+def test_global_detail_surfaces_conflict(ame_path, capsys):
+    code, out = _run(["--global", "gconst"], ame_path, capsys)
+    assert code == 0
+    g = _json(out)
+    assert g["value"] == "9.81"
+    assert g["conflicts"][0]["authoritative"] == "9.81"
+
+
+def test_global_unknown_name_fails(ame_path, capsys):
+    assert _run(["--global", "nope"], ame_path, capsys)[0] == 1
+
+
+def test_globals_never_reports_a_bare_zero(tmp_path, capsys):
+    """三源皆空时要给说明，而不是一个会被误读成"这模型没有全局参数"的 0。"""
+    import io
+    import tarfile
+
+    from ameparse.cli import NO_GLOBALS_NOTE
+    payload = (b"<CIR><CIRCUIT><COMPS_LIST/>"
+               b"<GLOBAL_PARAMS_LIST/></CIRCUIT></CIR>")
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tf:
+        info = tarfile.TarInfo("NoGlobals_.cir")
+        info.size = len(payload)
+        tf.addfile(info, io.BytesIO(payload))
+    path = tmp_path / "NoGlobals.ame"
+    path.write_bytes(buf.getvalue())
+
+    code, out = _run(["--globals"], str(path), capsys)
+    assert code == 0
+    r = _json(out)
+    assert r["global_params"] == []
+    assert r["note"] == NO_GLOBALS_NOTE
+
+
+def test_search_covers_globals(ame_path, capsys):
+    code, out = _run(["--search", "twin"], ame_path, capsys)
+    assert code == 0
+    r = _json(out)
+    assert [g["name"] for g in r["globals"]] == ["gtwin", "gtwin__SUB1"]

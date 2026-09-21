@@ -29,8 +29,22 @@ def test_to_dict_structure(model):
     assert card["simulation"]["final_time"] == 40000.0
     assert card["saved_variables"][0]["data_path"] == "q1@pump01"
     assert card["declared_variables"][1]["hidden"] is True
-    # .results 不进 archive_members
-    assert all(not m["name"].endswith(".results") for m in card["archive_members"])
+    # 清单必须完整：大成员（.results/.c/.png/.ameperf）只列不解析。
+    # 早先整个删掉，导致清单漏成员（漏掉的成员没人会再去找）
+    names = [m["name"] for m in card["archive_members"]]
+    assert "TestModel_.results" in names
+    assert "TestModel_.c" in names
+    assert "TestModel_.amegp.1" in names
+    # 全局参数三源合并 + 引用索引
+    assert card["counts"]["global_params"] == 6
+    assert card["counts"]["properties"] == 2
+    gconst = next(g for g in card["global_params"] if g["varname"] == "gconst")
+    assert gconst["value"] == "9.81" and gconst["source"] == ".amegp"
+    assert gconst["units"] == "m/s2" and gconst["default"] == "9.81"
+    assert [c["name"] for c in card["global_conflicts"]] == ["gconst"]
+    assert card["global_refs"]["counts"]["gtwin"] == 1
+    assert [t["base"] for t in card["global_refs"]["twins"]] == ["gtwin"]
+    assert [d["owner"] for d in card["global_refs"]["undefined_refs"]] == ["gderived"]
     # 参数声明合并
     pump = next(c for c in card["components"] if c["alias"] == "pump01")
     p = pump["params"][0]

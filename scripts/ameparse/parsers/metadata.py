@@ -1,12 +1,14 @@
 """元信息类成员解析：``.modelinfo`` / ``.sim`` / ``.studyparam`` / ``.units`` /
-``.amegp`` / ``.props/properties.xml``。"""
+``.props/properties.xml``。
+
+全局参数（``.amegp``/``.cir``/``.pl`` 三源）在 :mod:`.globals` 里统一处理。
+"""
 
 from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
 
-from ..model.circuit import GlobalParam
 from ..model.metadata import (
     BatchParam,
     ModelInfo,
@@ -19,7 +21,7 @@ from ..model.metadata import (
     StudyParams,
     Units,
 )
-from ..tolerant import parse as parse_tolerant
+from ..tolerant import iter_local, parse as parse_tolerant
 
 # 头部字段可能换行书写，独立匹配；无 INTERFACE 的是无外部接口的纯模型
 _OUTPUT_RE = re.compile(r'OUTPUT\s+(\d+)\s*;\s*"([^"]*)"\s*;\s*"([^"]*)"')
@@ -138,40 +140,28 @@ class UnitsParser:
         )
 
 
-class AmegpParser:
-    """``.amegp`` → [GlobalParam]（全局参数；样本中为空）。"""
-
-    suffix = ".amegp"
-
-    def parse(self, text: str) -> list:
-        root = parse_tolerant(text)
-        out = []
-        for node in root.iter("GPARAM"):
-            out.append(
-                GlobalParam(
-                    varname=node.text_of("VARNAME"),
-                    title=node.text_of("TITLE"),
-                    value=node.text_of("VALUE"),
-                    units=node.text_of("UNITS"),
-                )
-            )
-        return out
-
-
 class PropertiesParser:
-    """``.props/properties.xml`` → Properties。"""
+    """``.props/properties.xml`` → Properties。
+
+    真实文件根节点带 ``xmlns="amesim-property-instances"``，ET 展开后标签是
+    ``{amesim-property-instances}property``，因此必须按 local name 匹配
+    （``iter_local``）——直接 ``iter("property")`` 会一条都找不到，把整张
+    属性表静默报成空。``sticker`` 属性是模型作者标的置信度贴纸
+    （Low confidence / High importance）。
+    """
 
     suffix = "properties.xml"
 
     def parse(self, text: str) -> Properties:
         root = _xml_root(text)
         props = Properties()
-        for p in root.iter("property"):
+        for p in iter_local(root, "property"):
             props.entries.append(
                 PropertyEntry(
                     id=p.attrib.get("id", ""),
                     name=p.attrib.get("name", ""),
                     target=p.attrib.get("target", ""),
+                    sticker=p.attrib.get("sticker", ""),
                 )
             )
         return props
@@ -191,10 +181,6 @@ def parse_studyparam(text: str) -> StudyParams:
 
 def parse_units(text: str) -> Units:
     return UnitsParser().parse(text)
-
-
-def parse_amegp(text: str) -> list:
-    return AmegpParser().parse(text)
 
 
 def parse_properties(text: str) -> Properties:

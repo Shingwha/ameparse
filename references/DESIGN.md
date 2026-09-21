@@ -221,3 +221,35 @@ graph_error`；`component(alias)` 重名抛 `AmbiguousAlias`（`path=` 限定，
      裁剪；列表命令无过滤拒绝执行（`--all` 覆盖）——防上下文自爆。
    - `--component` 单组件 dump 与 `--params/--variables --component` 共享
      dest：列表旗标优先，`--component` 值作其过滤器。
+10. **全局参数可见性修正**（0.5.0）：修掉三个"静默报空"的 bug——它们共同
+    的害处是给出**自信的错误答案**，比"未解析"更有害（会让追问到此为止）：
+    - `AmegpParser` 只认 `GPARAM`/`UNITS`，真实 `.amegp` 用 `PARAMETER`/`UNIT`
+      → 233 个全局参数报 0。`.cir` 侧同一错误（`GLOBALPARAM`/`GLOB_PARAM_NAME`），
+      且用 `find` 只取首个容器，两个 `GLOBAL_PARAMS_LIST` 段会再漏一半。
+      现在三源（`.amegp`/`.cir`/`.pl`）统一走 `parsers/globals.py` 的
+      **来源注册表** `EXTRACTORS`（加来源 = 加一条记录），节点级同时兼容
+      子元素式与属性式。
+    - `PropertiesParser` 用 `iter("property")`，真实文件根节点带
+      `xmlns="amesim-property-instances"` → ET 标签是 `{ns}property`，整张
+      属性表（含 `sticker` 置信度贴纸）报 0。新增命名空间无关的
+      `tolerant.iter_local`。
+    - `SKIP_MEMBER_SUFFIXES` 把 `.results`/`.png`/`.ameperf` 从
+      `archive_members` 里整个删掉 → 清单漏成员（漏掉的成员没人会再去找）。
+      现在清单列全部成员，"不解析"与"不列出"是两件事。
+    - 解码：`.cir` 声明 `ISO-8859-1` 实际写 UTF-8，照声明解码把所有中文标题
+      变乱码（标题正是这类模型信息量最大的部分）。`archive.decode_text`
+      改为先试 UTF-8、失败退回 latin-1，UTF-16 靠 BOM 识别。
+    - 合并：`.amegp` 权威，分歧进 `global_conflicts` 而**不静默择一**；
+      引用索引 `linking/globalrefs.py` 把全部已声明名一次编译成联合正则
+      （O(取值数)，实测 234 全局 × 3870 引用 0.06s），并给三类机械诊断
+      （`conflicts`/`twins`/`unused`/`undefined_refs`）。同一份数据在
+      "扁平可编辑模型"上是便利，在"封装受保护交付物"上才是真正的杠杆点——
+      PB62 实测：234 个全局里 8 个跨来源分歧、8 组孪生名取值不一致，
+      而那些都只能靠人肉翻文件才能发现。
+    - CLI 新增 `--globals`/`--global NAME`/`--with-refs`；`--search` 覆盖
+      全局参数。三源皆空时输出 `note` 而不是裸 `[]`（见 `NO_GLOBALS_NOTE`）。
+    - 不做的：`orphans`（组件取值里 token 级"悬空引用"）。组件取值可能是
+      任意字符串（`materialName='PU'`/`'Cell_Width'`），token 扫描在舱体与
+      PB62 上分别产出 5/20 条噪音，且找不到能把材料名与真悬空引用分开的
+      机械判据。宁可不报，也不报一堆假的——诊断只在类型无歧义的全局定义
+      表达式里做（`undefined_refs`）。

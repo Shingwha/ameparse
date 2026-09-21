@@ -61,6 +61,26 @@ class Node:
         return "/".join(reversed(parts))
 
 
+def local_name(tag: str) -> str:
+    """去掉命名空间：``{ns}property`` → ``property``。"""
+    return tag.rpartition("}")[2]
+
+
+def iter_local(node, tag: str):
+    """命名空间无关地遍历子元素（``ElementTree`` 与 :class:`Node` 通用）。
+
+    ET 会把根节点的 ``xmlns="..."`` 展开进标签名（``{ns}property``），
+    于是 ``root.iter("property")`` 一条都匹配不到——``properties.xml``
+    的模型属性表就是这样被静默报成空的。这里统一按 local name 匹配。
+    """
+    if isinstance(node, Node):
+        yield from node.iter(tag)
+        return
+    for el in node.iter():
+        if local_name(el.tag) == tag:
+            yield el
+
+
 def _append_text(node: Node, text: str) -> None:
     text = text.strip()
     if text:

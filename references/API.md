@@ -36,10 +36,22 @@ m.graph_error                             # 不可用原因（无 .c / 解析失
 | `m.simulation` | `SimOptions` | 起止时间 / 打印间隔 + `values`（按下标取未确认字段）+ `raw` |
 | `m.study` | `StudyParams` | 研究/批量参数（含上下界） |
 | `m.units` / `m.properties` | `Units` / `Properties \| None` | 单位配置、属性实例 |
-| `m.global_params` | `[GlobalParam]` | `.amegp` |
+| `m.global_params` | `[GlobalParam]` | 全局参数（`.amegp`/`.cir`/`.pl` 三源合并，`source` 标明交付值来源） |
+| `m.global_conflicts` | `[dict]` | 同名全局的跨来源取值分歧（不静默择一） |
+| `m.global_param(name)` | `GlobalParam` | 单个全局量；不存在抛 `KeyError` |
+| `m.refs` | `GlobalRefIndex` | 引用索引（懒解析，只需 `.cir`，不依赖 `.c`） |
+| `m.global_ref_summary()` | `dict` | 引用计数 + `unused`/`twins`/`undefined_refs` |
 | `m.saved_variables` | `[SavedVariable]` | `.ssf` 保存清单（`ameloadvarst` 可取数判据） |
-| `m.archive_members` | `[Member]` | tar 成员清单（已滤除大文件） |
-| `m.counts` | `dict` | 组件/参数/变量/边等统计 |
+| `m.archive_members` | `[Member]` | tar 成员清单（列出全部成员；只有解析是白名单制） |
+| `m.counts` | `dict` | 组件/参数/变量/边/全局量/属性等统计 |
+
+`GlobalRefIndex`：`refs(name)` → `[GlobalRef]`，`ref_count(name)`，
+`total_refs`，以及 `summary_dict()` / `to_dict()` 两种视图。
+`GlobalRef` 字段：`name` / `owner_id`（`名称@别名`）/ `alias` / `kind`
+（`param`/`variable`/`global`）/ `role`（`value` 整值 / `expression` 表达式）/
+`path`（组件路径，别名可重名）/ `expr`。
+变量命中要读成**该状态初值**被这个全局量驱动——这是"这个旋钮影响哪些状态"的
+直接答案。
 
 ## 组件查询
 

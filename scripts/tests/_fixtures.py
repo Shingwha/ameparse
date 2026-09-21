@@ -100,6 +100,7 @@ CIR = f"""<?xml version="1.0" encoding="ISO-8859-1"?>
         <TYPE>0</TYPE>
         <SAVE_VALUE>1</SAVE_VALUE>
         <UNITS>L/min</UNITS>
+        <VALUE>gtwin</VALUE>
        </EVAR>
       </PORT>"""],
         ivars=["""      <IVAR>
@@ -246,13 +247,78 @@ IS_EXPLICIT 1
 AMEGP = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE GP>
 <GLOBAL_PARAMS_LIST>
- <GPARAM>
+ <PARAMETER EVAL_ORDER="-1">
+  <TYPE>1</TYPE>
   <VARNAME>gconst</VARNAME>
   <TITLE>global constant</TITLE>
   <VALUE>9.81</VALUE>
-  <UNITS>m/s2</UNITS>
+  <DEFAULT>9.81</DEFAULT>
+  <MIN_VALUE>0</MIN_VALUE>
+  <MAX_VALUE>1.00000000000000e+30</MAX_VALUE>
+  <UNIT>m/s2</UNIT>
+ </PARAMETER>
+ <PARAMETER EVAL_ORDER="-1">
+  <TYPE>1</TYPE>
+  <VARNAME>gderived</VARNAME>
+  <TITLE>derived, references gconst and an undefined name</TITLE>
+  <VALUE>gconst*2+gmystery</VALUE>
+  <DEFAULT>0.0</DEFAULT>
+  <UNIT>null</UNIT>
+ </PARAMETER>
+ <PARAMETER EVAL_ORDER="-1">
+  <TYPE>1</TYPE>
+  <VARNAME>gtwin</VARNAME>
+  <TITLE>twin base</TITLE>
+  <VALUE>1</VALUE>
+  <DEFAULT>1</DEFAULT>
+  <UNIT>null</UNIT>
+ </PARAMETER>
+ <PARAMETER EVAL_ORDER="-1">
+  <TYPE>1</TYPE>
+  <VARNAME>gtwin__SUB1</VARNAME>
+  <TITLE>twin with instance suffix, divergent value</TITLE>
+  <VALUE>2</VALUE>
+  <DEFAULT>2</DEFAULT>
+  <UNIT>null</UNIT>
+ </PARAMETER>
+ <PARAMETER EVAL_ORDER="-1">
+  <TYPE>1</TYPE>
+  <VARNAME>gunused</VARNAME>
+  <TITLE>defined but never referenced</TITLE>
+  <VALUE>7</VALUE>
+  <DEFAULT>7</DEFAULT>
+  <UNIT>null</UNIT>
+ </PARAMETER>
+</GLOBAL_PARAMS_LIST>
+"""
+
+# 旧写法（GPARAM/UNITS）——真实文件不用，但历史解析器只认它。保留一份
+# 证明解析器两种拼写都吃（回归：旧实现只认这种，真实文件全部报空）。
+AMEGP_LEGACY = """<?xml version="1.0" encoding="UTF-8"?>
+<GLOBAL_PARAMS_LIST>
+ <GPARAM>
+  <VARNAME>glegacy</VARNAME>
+  <TITLE>legacy spelling</TITLE>
+  <VALUE>3</VALUE>
+  <UNITS>null</UNITS>
  </GPARAM>
 </GLOBAL_PARAMS_LIST>
+"""
+
+# .pl：属性式写法（值在 XML 属性上）。含一个与 .amegp 同名且取值分歧的量
+# （冲突必须被报出），一个只在此定义的量，以及一个组件参数（必须不被当成全局）
+PL = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE PL>
+<PL>
+ <GLOBAL_PARAMS_LIST>
+  <PARAMETER Data_Path="gconst" Param_Id="0" TITLE="global constant" TUNABLE="false" UNITS="m/s2" VALUE="1.5"/>
+  <PARAMETER Data_Path="gplonly" Param_Id="0" TITLE="only defined in .pl" TUNABLE="false" UNITS="null" VALUE="42"/>
+ </GLOBAL_PARAMS_LIST>
+ <GLOBAL_LOCAL_PARAMS_LIST/>
+ <PARAMS_LIST>
+  <PARAMETER Data_Path="displ@pump01" Param_Id="1" TITLE="displacement" TUNABLE="true" UNITS="cc/rev" VALUE="71"/>
+ </PARAMS_LIST>
+</PL>
 """
 
 SIM = "0 40000 1 1e+30 1e-07 0.001 1 0.1\n0 0 0 0 8 0 0 0 0 0\n"
@@ -316,8 +382,13 @@ UNITS = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 PROPERTIES = """<?xml version="1.0" encoding="UTF-8"?>
-<properties>
- <property id="p1" name="author" target="model"/>
+<properties xmlns="amesim-property-instances" version="1">
+ <property id="p1" name="author" target="model:" sticker="">
+  <struct/>
+ </property>
+ <property id="p2" name="@special:stickers" target="aliaspath:pump01" sticker="Low confidence">
+  <struct/>
+ </property>
 </properties>
 """
 
@@ -330,6 +401,8 @@ def make_ame_bytes(model: str = "TestModel") -> bytes:
         f"{model}_.ssf": SSF.encode("latin-1"),
         f"{model}_.modelinfo": MODELINFO.encode("latin-1"),
         f"{model}_.amegp": AMEGP.encode("latin-1"),
+        f"{model}_.pl": PL.encode("latin-1"),
+        f"{model}_.amegp.1": AMEGP.encode("latin-1"),
         f"{model}_.sim": SIM.encode("latin-1"),
         f"{model}_.studyparam": STUDYPARAM.encode("latin-1"),
         f"{model}_.units": UNITS.encode("latin-1"),

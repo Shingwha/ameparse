@@ -29,7 +29,7 @@ from .errors import (
     GraphUnavailable,
     MemberNotFound,
 )
-from .linking import GraphResolver, Linker
+from .linking import GlobalRefIndex, GlobalRefResolver, GraphResolver, Linker
 from .model.circuit import CircuitModel, Component, Param, Var
 from .model.compiled import CompiledTopology
 from .model.declarations import Declarations
@@ -49,19 +49,23 @@ from .parsers import (
     CompiledParser,
     ModelInfoParser,
     ParamFileParser,
+    PlParser,
     PropertiesParser,
     SimParser,
     SsfParser,
     StudyParamParser,
     UnitsParser,
     VarFileParser,
+    merge_globals,
 )
 
 # 模型卡 schema 版本（键结构变更时递增）
 SCHEMA_VERSION = 1
 
-# .ame 内体积大且与模型结构无关的成员（.c 单独按需读取，不在此列报错，
-# 但同样不进 archive_members 清单）
+# .ame 内体积大且与模型结构无关的成员：仍然列出（名字+大小），但不解析。
+# 早先的实现把它们从 archive_members 里整个删掉，导致清单不可信——
+# .results（上一次仿真结果集，可达数百 MB）、.ameperf（性能日志）对
+# 标定参考曲线这类用途是有价值的，只是不该被 parser 读取。
 SKIP_MEMBER_SUFFIXES = (".results", ".mexw64", ".obj", ".c", ".ameperf", ".png")
 
 _UNSET = object()
@@ -99,10 +103,9 @@ class Model:
             if t is not None:
                 texts[suffix] = t
         self._c_text = ame.read_text(".c")
-        self._archive_members = [
-            m for m in ame.members()
-            if not m.name.lower().endswith(SKIP_MEMBER_SUFFIXES)
-        ]
+        # 全部成员都列入清单（含 .c/.results/.ameperf/.png：只列不解析），
+        # 清单不完整比清单大更危险——漏掉的成员没人会再去找
+        self._archive_members = list(ame.members())
         self.name = ame.model_name or (
             self.source_path.stem if self.source_path is not None else ""
         )
@@ -135,10 +138,17 @@ class Model:
         self._units: Units = UnitsParser().parse(texts.get(".units") or "")
         props_text = texts.get("properties.xml")
         self._properties = PropertiesParser().parse(props_text) if props_text else None
-        self._global_params = AmegpParser().parse(texts.get(".amegp") or "")
+
+        # 全局参数三源合并：取值以 .amegp 为准，跨来源分歧显式记录
+        self._global_params, self._global_conflicts = merge_globals({
+            ".amegp": AmegpParser().parse(texts.get(".amegp") or ""),
+            ".cir": self._circuit.global_params,
+            ".pl": PlParser().parse(texts.get(".pl") or ""),
+        })
 
         self._compiled = _UNSET
         self._graph = _UNSET
+        self._refs = _UNSET
 
     # ---------------------------------------------------------------- 节
 
@@ -173,7 +183,41 @@ class Model:
 
     @property
     def global_params(self) -> list:
+        """全局参数（三源合并结果；``source`` 标明交付值来自哪个成员）。"""
         return self._global_params
+
+    @property
+    def global_conflicts(self) -> list:
+        """同名全局在不同来源里取值不一致的记录（不静默择一）。"""
+        return self._global_conflicts
+
+    def global_param(self, name: str):
+        """按名字取一个全局参数。"""
+        for g in self._global_params:
+            if g.varname == name:
+                return g
+        raise KeyError(f"global parameter not found: {name}"
+                       + (f" ({len(self._global_params)} globals defined)"
+                          if self._global_params else
+                          " (no global definitions found in this model)"))
+
+    @property
+    def refs(self) -> GlobalRefIndex:
+        """全局参数引用索引（懒解析）。
+
+        与 ``graph`` 不同，这里只依赖 ``.cir`` 文本（无需 ``.c`` 编译产物），
+        所以任何模型都可用；引用值部分即状态初值（EVAR VALUE），是"这个
+        旋钮实际影响哪些状态"的直接依据。
+        """
+        if self._refs is _UNSET:
+            values = {g.varname: g.value for g in self._global_params}
+            self._refs = GlobalRefResolver(
+                self._circuit, list(values), values).resolve()
+        return self._refs
+
+    def global_ref_summary(self) -> dict:
+        """引用索引的紧凑视图（计数 + 三类诊断）。"""
+        return self.refs.summary_dict()
 
     @property
     def saved_variables(self) -> list:
@@ -374,6 +418,8 @@ class Model:
             "declared_params": len(self._declarations.params),
             "declared_variables": len(self._declarations.variables),
             "saved_variables": len(self._saved_variables),
+            "global_params": len(self._global_params),
+            "properties": self._properties.count if self._properties else 0,
         }
 
     def to_dict(self) -> dict:
@@ -400,6 +446,17 @@ class Model:
             "Parameter values come from .cir (RPARAM/IPARAM/TPARAM VALUE); "
             "titles/units/Param_Id are merged from .param declarations keyed by "
             "Data_Path=name@alias.",
+            "global_params merges .amegp/.cir/.pl definitions (.amegp "
+            "authoritative); per-source disagreements are listed in "
+            "global_conflicts rather than silently resolved.",
+            "global_refs counts how many parameter/variable values mention each "
+            "global; a variable's value here is its initial state value (EVAR "
+            "VALUE), so it is the direct answer to 'which states does this knob "
+            "drive'. orphans are identifiers that resolve to no defined global "
+            "(candidate dangling references); unused are defined but unreferenced.",
+            "archive_members lists every tar member (name/size/is_file) "
+            "including large opaque ones (.c/.results/.obj/.ameperf/.png) that "
+            "are listed but not parsed.",
         ]
         if graph is None:
             notes.append("graph unavailable (no compiled .c product or resolution "
@@ -421,6 +478,8 @@ class Model:
             "lines": [l.to_dict() for l in circuit.lines],
             "supercomponents": [s.to_dict() for s in circuit.supercomponents],
             "global_params": [g.to_dict() for g in self._global_params],
+            "global_conflicts": self._global_conflicts,
+            "global_refs": self.global_ref_summary(),
             "simulation": self._simulation.to_dict(),
             "study_params": [s.to_dict() for s in self._study.study_params],
             "batch_params": [b.to_dict() for b in self._study.batch_params],

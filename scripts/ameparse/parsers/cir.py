@@ -16,7 +16,6 @@ from ..model.circuit import (
     Component,
     ComponentKey,
     ConnectRef,
-    GlobalParam,
     Line,
     Param,
     Port,
@@ -27,6 +26,7 @@ from ..model.circuit import (
     to_number,
 )
 from ..tolerant import Node, parse
+from .globals import extract_globals
 
 
 class CirParser:
@@ -50,6 +50,9 @@ class CirParser:
         model.highest_id = circuit.text_of("CIRCUIT_HIGHEST_ID")
         model.application = circuit.text_of("AME_APPLICATION")
         self._walk(circuit, (), "TOP", model)
+        # 全局参数定义（GLOBALPARAM/GLOB_PARAM_NAME），可能分布在多个
+        # GLOBAL_PARAMS_LIST 段里，按整棵树提取
+        model.global_params = extract_globals(root, ".cir")
         return model
 
     # ---------------------------------------------------------------- 元素
@@ -250,17 +253,9 @@ class CirParser:
                     )
                 )
 
-        gp_node = circuit.find("GLOBAL_PARAMS_LIST")
-        if gp_node is not None:
-            for gp in gp_node.iter("GPARAM"):
-                model.global_params.append(
-                    GlobalParam(
-                        varname=gp.text_of("VARNAME"),
-                        title=gp.text_of("TITLE"),
-                        value=gp.text_of("VALUE"),
-                        units=gp.text_of("UNITS"),
-                    )
-                )
+    # 全局参数不在这里提取：旧实现在 _walk 里按"首个容器 + GPARAM 标签"找，
+    # 而真实 .cir 用 GLOBALPARAM 且可能有两个 GLOBAL_PARAMS_LIST 段（各带一部分
+    # 定义）。统一改到 parse() 里对整棵树提取，见 extract_globals。
 
 
 def parse_cir(text: str) -> CircuitModel:

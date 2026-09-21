@@ -12,6 +12,8 @@ Agent-friendly query flow (drill down, keep each command's stdout small)::
     ameparse model.ame --variables --component BatPackGene --saved
     ameparse model.ame --search temperature
     ameparse model.ame --study-params
+    ameparse model.ame --globals                     # + ref counts & diagnostics
+    ameparse model.ame --global LF_beta7             # one global + its ref sites
     ameparse model.ame --component BatPackGene --no-variables
     ameparse model.ame --summary / --saved-variables / --csv OUT_DIR
     ameparse model.ame -o card.json                 # full card (never cat to context)
@@ -36,6 +38,14 @@ from .core import Model
 _SUBGRAPH_NODE_CAP = 300
 # 关键词搜索每类结果上限
 _SEARCH_CAP = 100
+# 单个全局参数的引用明细上限（--global）/ 每个全局的内联引用上限（--globals --with-refs）
+_REFS_CAP = 100
+_REFS_PER_GLOBAL_CAP = 20
+
+# 三源都没有定义时的说明。明确"没找到"，而不是一个会被误读成
+# "这个模型没有全局参数"的 0——一个自信的零会让追问到此为止。
+NO_GLOBALS_NOTE = ("no global definitions found in this model "
+                   "(.amegp / .cir / .pl all absent or empty)")
 
 
 def _dump(obj, indent=2) -> None:
@@ -78,6 +88,20 @@ def _variable_row(v) -> dict:
         "unit": v.units,
         "kind": v.kind,
         "saved": v.saved,
+    }
+
+
+def _global_row(g, ref_count: int = 0) -> dict:
+    return {
+        "name": g.varname,
+        "value": g.value,
+        "unit": g.units,
+        "default": g.default,
+        "min": g.min,
+        "max": g.max,
+        "title": g.title,
+        "source": g.source,
+        "refs": ref_count,
     }
 
 
@@ -153,9 +177,20 @@ def _cmd_parse(argv: list) -> int:
                     help="with --variables: only hidden variables (.var HIDDEN section)")
     # -- 检索 / 其他 ----------------------------------------------------
     ap.add_argument("--search", metavar="KEYWORD",
-                    help="search params & variables by name/title substring")
+                    help="search globals/params/variables by name/title substring")
     ap.add_argument("--study-params", action="store_true",
                     help="print study/batch parameters with bounds")
+    # -- 全局参数 -------------------------------------------------------
+    ap.add_argument("--globals", action="store_true",
+                    help="list global parameters (.amegp/.cir/.pl merged) with "
+                         "reference counts, conflicts and diagnostics (large on "
+                         "big models; narrow with --search or --global NAME)")
+    ap.add_argument("--global", dest="global_name", metavar="NAME",
+                    help="print one global parameter with every referencing "
+                         "param/variable (name@alias) and its role")
+    ap.add_argument("--with-refs", action="store_true",
+                    help="with --globals: include the per-global reference list "
+                         "(large; prefer --global NAME for one parameter)")
     # -- 图 -------------------------------------------------------------
     ap.add_argument("--neighbors", metavar="ALIAS", help="print component neighbors by port")
     ap.add_argument("--subgraph", metavar="ALIAS",
@@ -269,9 +304,14 @@ def _cmd_parse(argv: list) -> int:
                   if kw in p.varname.lower() or kw in p.title.lower()]
         variables = [v for v in model.variables()
                      if kw in v.varname.lower() or kw in v.title.lower()]
-        truncated = len(params) > _SEARCH_CAP or len(variables) > _SEARCH_CAP
+        globals_ = [g for g in model.global_params
+                    if kw in g.varname.lower() or kw in g.title.lower()]
+        truncated = (len(params) > _SEARCH_CAP or len(variables) > _SEARCH_CAP
+                     or len(globals_) > _SEARCH_CAP)
         _dump({
             "keyword": args.search,
+            "globals": [_global_row(g, model.refs.ref_count(g.varname))
+                        for g in globals_[:_SEARCH_CAP]],
             "params": [_param_row(p) for p in params[:_SEARCH_CAP]],
             "variables": [_variable_row(v) for v in variables[:_SEARCH_CAP]],
             "truncated": truncated,
@@ -280,6 +320,49 @@ def _cmd_parse(argv: list) -> int:
 
     if args.study_params:
         _dump(model.study.to_dict(), args.indent)
+        return 0
+
+    if args.globals:
+        if not model.global_params:
+            _dump({"global_params": [], "note": NO_GLOBALS_NOTE}, args.indent)
+            return 0
+        idx = model.refs
+        out = {
+            "global_params": [_global_row(g, idx.ref_count(g.varname))
+                              for g in model.global_params],
+            "total_refs": idx.total_refs,
+            "undefined_refs": idx.undefined_refs,
+            "unused": idx.unused,
+            "twins": idx.twins,
+        }
+        if model.global_conflicts:
+            out["conflicts"] = model.global_conflicts
+        if args.with_refs:
+            refs, truncated = {}, False
+            for g in model.global_params:
+                rs = idx.refs(g.varname)
+                if len(rs) > _REFS_PER_GLOBAL_CAP:
+                    truncated = True
+                refs[g.varname] = [r.to_dict() for r in rs[:_REFS_PER_GLOBAL_CAP]]
+            out["refs"] = refs
+            out["refs_truncated"] = truncated
+        _dump(out, args.indent)
+        return 0
+
+    if args.global_name:
+        try:
+            g = model.global_param(args.global_name)
+        except Exception as e:
+            return _fail(str(e))
+        rs = model.refs.refs(args.global_name)
+        out = _global_row(g, len(rs))
+        out["refs"] = [r.to_dict() for r in rs[:_REFS_CAP]]
+        if len(rs) > _REFS_CAP:
+            out["refs_truncated"] = True
+            out["refs_shown"] = _REFS_CAP
+        out["conflicts"] = [c for c in model.global_conflicts
+                            if c["name"] == args.global_name]
+        _dump(out, args.indent)
         return 0
 
     if args.neighbors:

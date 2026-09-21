@@ -95,8 +95,9 @@ def test_units_and_properties_and_amegp():
     assert units.domains == 1 and units.unit_definitions == 1
 
     props = PropertiesParser().parse(PROPERTIES)
-    assert props.count == 1
+    assert props.count == 2
     assert props.entries[0].id == "p1"
+    assert props.entries[1].sticker == "Low confidence"
 
     gps = AmegpParser().parse(AMEGP)
     assert gps[0].varname == "gconst"

@@ -19,14 +19,19 @@ from .declarations import (
     parse_ssf_file,
     parse_var_file,
 )
-from .metadata import (
+from .globals import (
     AmegpParser,
+    PlParser,
+    merge_globals,
+    parse_amegp,
+    parse_globals,
+)
+from .metadata import (
     ModelInfoParser,
     PropertiesParser,
     SimParser,
     StudyParamParser,
     UnitsParser,
-    parse_amegp,
     parse_modelinfo,
     parse_properties,
     parse_sim,
@@ -51,6 +56,7 @@ MEMBER_PARSERS: dict = {
     ".ssf": SsfParser(),
     ".modelinfo": ModelInfoParser(),
     ".amegp": AmegpParser(),
+    ".pl": PlParser(),
     ".sim": SimParser(),
     ".studyparam": StudyParamParser(),
     ".units": UnitsParser(),
@@ -60,9 +66,10 @@ MEMBER_PARSERS: dict = {
 __all__ = [
     "MEMBER_PARSERS", "MemberParser",
     "AmegpParser", "CirParser", "CompiledParser", "ModelInfoParser",
-    "ParamFileParser", "PropertiesParser", "SimParser", "SsfParser",
+    "ParamFileParser", "PlParser", "PropertiesParser", "SimParser", "SsfParser",
     "StudyParamParser", "UnitsParser", "VarFileParser",
-    "build_topology", "parse_amegp", "parse_cir", "parse_modelinfo",
-    "parse_param_file", "parse_properties", "parse_sim", "parse_ssf_file",
-    "parse_studyparam", "parse_units", "parse_var_file",
+    "build_topology", "merge_globals", "parse_amegp", "parse_cir",
+    "parse_globals", "parse_modelinfo", "parse_param_file", "parse_properties",
+    "parse_sim", "parse_ssf_file", "parse_studyparam", "parse_units",
+    "parse_var_file",
 ]

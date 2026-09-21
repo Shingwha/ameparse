@@ -1,6 +1,6 @@
 [project]
 name = "ameparse"
-version = "0.4.0"
+version = "0.5.0"
 description = "Parser for .ame model files: pure-Python extraction of model structure, components, params, variables and the alias-level connection graph"
 requires-python = ">=3.11"
 dependencies = []
