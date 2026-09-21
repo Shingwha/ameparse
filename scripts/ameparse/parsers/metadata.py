@@ -1,0 +1,201 @@
+"""元信息类成员解析：``.modelinfo`` / ``.sim`` / ``.studyparam`` / ``.units`` /
+``.amegp`` / ``.props/properties.xml``。"""
+
+from __future__ import annotations
+
+import re
+import xml.etree.ElementTree as ET
+
+from ..model.circuit import GlobalParam
+from ..model.metadata import (
+    BatchParam,
+    ModelInfo,
+    ModelInput,
+    ModelOutput,
+    Properties,
+    PropertyEntry,
+    SimOptions,
+    StudyParam,
+    StudyParams,
+    Units,
+)
+from ..tolerant import parse as parse_tolerant
+
+# 头部字段可能换行书写，独立匹配；无 INTERFACE 的是无外部接口的纯模型
+_OUTPUT_RE = re.compile(r'OUTPUT\s+(\d+)\s*;\s*"([^"]*)"\s*;\s*"([^"]*)"')
+_INPUT_RE = re.compile(
+    r'INPUT\s+(\d+)\s*;\s*"([^"]*)"\s*;\s*"([^"]*)"\s*;\s*"([^"]*)"'
+)
+
+
+def _xml_root(text: str):
+    """合法 XML 走 ElementTree，失败退回容错解析（两者接口兼容）。"""
+    try:
+        return ET.fromstring(text)
+    except ET.ParseError:
+        return parse_tolerant(text)
+
+
+class ModelInfoParser:
+    """``.modelinfo`` → ModelInfo（状态数 + Simulink 接口输入输出表）。"""
+
+    suffix = ".modelinfo"
+
+    def parse(self, text: str) -> ModelInfo:
+        info = ModelInfo()
+        for key, attr, conv in (
+            ("NUM_STATES", "states", int),
+            ("NUM_DISCRETE_STATES", "discrete_states", int),
+            ("IS_EXPLICIT", "is_explicit", lambda v: bool(int(v))),
+        ):
+            m = re.search(rf"\b{key}\s+(\d+)", text)
+            if m:
+                setattr(info, attr, conv(m.group(1)))
+        m = re.search(r'\bINTERFACE\s+"([^"]*)"', text)
+        if m:
+            info.interface = m.group(1)
+        for m in _OUTPUT_RE.finditer(text):
+            info.outputs.append(
+                ModelOutput(index=int(m.group(1)), external_name=m.group(2),
+                            data_path=m.group(3))
+            )
+        for m in _INPUT_RE.finditer(text):
+            info.inputs.append(
+                ModelInput(index=int(m.group(1)), external_name=m.group(2),
+                           data_path=m.group(3), start_value=m.group(4))
+            )
+        return info
+
+
+class SimParser:
+    """``.sim`` → SimOptions（两行数字；final_time/print_interval 按前三个字段）。"""
+
+    suffix = ".sim"
+
+    def parse(self, text: str) -> SimOptions:
+        lines = [ln for ln in text.splitlines() if ln.strip()]
+        nums = [ln.split() for ln in lines]
+        opts = SimOptions(raw=lines,
+                          values=[[float(x) for x in row] for row in nums])
+        if len(nums) >= 1 and len(nums[0]) >= 3:
+            opts.start_time = float(nums[0][0])
+            opts.final_time = float(nums[0][1])
+            opts.print_interval = float(nums[0][2])
+        return opts
+
+
+class StudyParamParser:
+    """``.studyparam`` → StudyParams（研究/批量参数，含上下界）。"""
+
+    suffix = ".studyparam"
+
+    def parse(self, text: str) -> StudyParams:
+        root = _xml_root(text)
+        out = StudyParams()
+        for sp in root.iter("STUDY_PARAM"):
+            out.study_params.append(
+                StudyParam(
+                    name=sp.findtext("STUDY_PARAM_NAME", ""),
+                    value=sp.findtext("VALUE", ""),
+                    upper_bound=sp.findtext("UPPER_BOUND", ""),
+                    lower_bound=sp.findtext("LOWER_BOUND", ""),
+                    origin=sp.findtext("ORIGIN", ""),
+                    type=sp.findtext("PARAM_TYPE", ""),
+                    amesim_name=sp.findtext("AMESIM_NAME", ""),
+                    title=sp.findtext("TITLE", ""),
+                    submodel=sp.findtext("SUB_NAME", ""),
+                    instance=sp.findtext("INSTANCE", ""),
+                    alias_path=sp.findtext("ALIAS_PATH", ""),
+                )
+            )
+        for bp in root.iter("PARAM"):
+            if bp.findtext("PARAM_NAME") is None:
+                continue
+            out.batch_params.append(
+                BatchParam(
+                    name=bp.findtext("PARAM_NAME", ""),
+                    unit=bp.findtext("PARAM_UNIT", ""),
+                    range_value=bp.findtext("RANGE_VALUE", ""),
+                    set_values=[e.text or "" for e in bp if e.tag == "SET_VALUE"],
+                )
+            )
+        return out
+
+
+class UnitsParser:
+    """``.units`` → Units（单位制配置摘要）。"""
+
+    suffix = ".units"
+
+    def parse(self, text: str) -> Units:
+        root = _xml_root(text)
+        cfg = next(root.iter("Configuration_Definition"), None)
+        return Units(
+            active_configuration_id=root.attrib.get("Active_Configuration_Id", ""),
+            configuration_name=cfg.attrib.get("Name", "") if cfg is not None else "",
+            domains=len(cfg.findall("Domain_Definition")) if cfg is not None else 0,
+            unit_definitions=len(list(root.iter("Unit_Definition"))),
+        )
+
+
+class AmegpParser:
+    """``.amegp`` → [GlobalParam]（全局参数；样本中为空）。"""
+
+    suffix = ".amegp"
+
+    def parse(self, text: str) -> list:
+        root = parse_tolerant(text)
+        out = []
+        for node in root.iter("GPARAM"):
+            out.append(
+                GlobalParam(
+                    varname=node.text_of("VARNAME"),
+                    title=node.text_of("TITLE"),
+                    value=node.text_of("VALUE"),
+                    units=node.text_of("UNITS"),
+                )
+            )
+        return out
+
+
+class PropertiesParser:
+    """``.props/properties.xml`` → Properties。"""
+
+    suffix = "properties.xml"
+
+    def parse(self, text: str) -> Properties:
+        root = _xml_root(text)
+        props = Properties()
+        for p in root.iter("property"):
+            props.entries.append(
+                PropertyEntry(
+                    id=p.attrib.get("id", ""),
+                    name=p.attrib.get("name", ""),
+                    target=p.attrib.get("target", ""),
+                )
+            )
+        return props
+
+
+def parse_modelinfo(text: str) -> ModelInfo:
+    return ModelInfoParser().parse(text)
+
+
+def parse_sim(text: str) -> SimOptions:
+    return SimParser().parse(text)
+
+
+def parse_studyparam(text: str) -> StudyParams:
+    return StudyParamParser().parse(text)
+
+
+def parse_units(text: str) -> Units:
+    return UnitsParser().parse(text)
+
+
+def parse_amegp(text: str) -> list:
+    return AmegpParser().parse(text)
+
+
+def parse_properties(text: str) -> Properties:
+    return PropertiesParser().parse(text)
